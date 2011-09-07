@@ -1,0 +1,10 @@
+*.bak
+*.orig
+*.orig.*
+*.log
+*.py[oc]
+*.sw[pon]
+.vimrc
+db/*.db
+tmp/
+media/
