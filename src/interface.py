@@ -19,13 +19,11 @@ class Interface(object):
         See http://wiki.imacros.net/iimInit%28%29 for more info.
         """
         # openNewBrowser and timeout paramenters are ignored currently
-        #
-        # FIXME Should we start browser right after interface is initialized?
         m = re.match(r'^-(\w+)(?:\s+(.*))?$', command)
         if not m:
             raise ValueError('Wrong command for iimInit')
-        self.bridge.reset()
         self.bridge.set_browser(m.group(1))
+        self.bridge.start_driver()
         return True
 
     def iimPlay(self, macro, timeout=0):
