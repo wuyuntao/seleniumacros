@@ -248,12 +248,12 @@ class Bridge(object):
         '''
         SIZE X=1024 Y=768
 
-        # >>> bridge = Bridge()
-        # >>> bridge.set_browser(Bridge.FIREFOX)
-        # >>> bridge.start_driver()
-        # >>> bridge.execute_size_command("X=300", "Y=600")
-        # >>> bridge.execute_wait_command("SECONDS=5")
-        # >>> bridge.reset()
+        >>> bridge = Bridge()
+        >>> bridge.set_browser(Bridge.FIREFOX)
+        >>> bridge.start_driver()
+        >>> bridge.execute_size_command("X=300", "Y=600")
+        >>> bridge.execute_wait_command("SECONDS=5")
+        >>> bridge.reset()
 
         '''
         # TODO Need to add asserts to resized window
@@ -271,26 +271,26 @@ class Bridge(object):
         >>> bridge.set_browser(Bridge.FIREFOX)
         >>> bridge.start_driver()
 
-        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
-        # >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=HREF:http://www.iopus.com")
-        # >>> bridge.execute_wait_command("SECONDS=5")
-
-        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
-        # >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=ID:myLinkID")
-        # >>> bridge.execute_wait_command("SECONDS=5")
-
-        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
-        # >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=NAME:myLinkName")
-        # >>> bridge.execute_wait_command("SECONDS=5")
-
-        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
-        # >>> bridge.execute_tag_command("POS=1", "TYPE=STRONG", "ATTR=TXT:<SP>iMacros<SP>User<SP>Forum")
-        # >>> bridge.execute_wait_command("SECONDS=5")
+        >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=HREF:http://www.iopus.com")
+        >>> bridge.execute_wait_command("SECONDS=5")
 
         >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
-        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:TEXT", "FORM=NAME:f1", "ATTR=NAME:tf1" "CONTENT=Hello<SP>World")
-        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:CHECKBOX", "FORM=NAME:f1" "ATTR=NAME:cb1&&ID:cb1", "CONTENT=YES")
-        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:RADIO", "FORM=NAME:f1", "ATTR=ID:r1", "CONTENT=YES")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=ID:myLinkID")
+        >>> bridge.execute_wait_command("SECONDS=5")
+
+        >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=NAME:myLinkName")
+        >>> bridge.execute_wait_command("SECONDS=5")
+
+        >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=STRONG", "ATTR=TXT:<SP>iMacros<SP>User<SP>Forum")
+        >>> bridge.execute_wait_command("SECONDS=5")
+
+        >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:TEXT", "FORM=NAME:F1", "ATTR=NAME:tf1", "CONTENT=Hello<SP>World")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:CHECKBOX", "FORM=NAME:F1", "ATTR=NAME:cb1&&ID:cb1", "CONTENT=YES")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:RADIO", "FORM=NAME:F1", "ATTR=ID:r1", "CONTENT=YES")
 
         """
         # TODO
@@ -302,8 +302,16 @@ class Bridge(object):
         pos, type, form, attrs, content, extract = self._parse_tag_arguments(*args)
         element = self._find_element_by(pos, type, form, attrs)
         if content:
-            element.clear()
-            element.send_keys(self._parse_value_string(content))
+            # Handle form controls
+            if element.tag_name in ('input', 'textarea'):
+                input_type = element.get_attribute('type')
+                if input_type in ('checkbox', 'radio'):
+                    has_to_be_selected = content == "YES"
+                    if element.is_selected() != has_to_be_selected:
+                        element.click()
+                else:
+                    element.clear()
+                    element.send_keys(self._parse_value_string(content))
         elif extract:
             logger.warn("Extract is not supported yet. Will trigger a click instead")
             element.click()
@@ -410,7 +418,7 @@ class Bridge(object):
 
     def _parse_html_attributes(self, string):
         attributes = {}
-        if string
+        if string:
             for attr in string.split('&&'):
                 if ':' in attr:
                     # Both name and value, e.g. NAME:email
@@ -440,6 +448,7 @@ class Bridge(object):
         if form:
             form = self._find_element_by(1, 'form', None, form)
             elements = form.find_elements_by_css_selector(css_selector)
+            # raise ValueError, "find form? %s\ncss_selector? %s\nfind elements? %s" % (form, css_selector, len(elements))
         else:
             elements = self.driver.find_elements_by_css_selector(css_selector)
         if text is not None:
