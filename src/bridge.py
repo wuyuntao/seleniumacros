@@ -4,9 +4,22 @@
 import re
 import time
 import logging
+import platform
 from selenium import webdriver
 
 logger = logging.getLogger('seleniumacros')
+
+try:
+    import win32com.client
+    import pywintypes
+    using_autoit = True
+except ImportError:
+    if platform.platform().startswith('Windows'):
+        raise ImportError, 'This program requires the pywin32 extensions for Python.'
+    else:
+        # We don't use AutoIt on other platforms
+        using_autoit = False
+        # TODO Use AutoKey on Linux
 
 class Bridge(object):
     ''' A bridge between iMacros and Selenium '''
@@ -147,6 +160,11 @@ class Bridge(object):
         if force or self.driver is None:
             logger.info('Starting driver')
             self.driver = self.WEB_DRIVERS[self.browser]()
+
+            if using_autoit:
+                # Get handle for AutoIT
+                # self.autoit = win32com.client.Dispatch("AutoItX3.Control")
+                pass
         else:
             logger.info('Driver is already started')
 
@@ -163,6 +181,8 @@ class Bridge(object):
             self.driver.close()
         self.driver = None
         self.browser = None
+        self.autoit = None
+        self.autoit_handle = None
         self.builtin_variables = {}
         # Set default values for built-in variables
         self.builtin_variables.update(self.DEFAULT_BUILTIN_VARIABLES)
@@ -186,6 +206,7 @@ class Bridge(object):
             # FIXME
             # Here is a bug when you run:
             # SET !VAR1 "Hello World"
+            # So we need a regexp to split tokens in the futrue
             command = command.split()
             if command[0] in self.SUPPORTED_COMMANDS:
                 getattr(self, 'execute_%s_command' % command[0].lower())(*command[1:])
@@ -193,7 +214,13 @@ class Bridge(object):
                 self.execute_unsupported_command(command[0], *command[1:])
 
     def execute_ds_command(self):
-        raise NotImplementedError, 'Not implemented yet.'
+        '''
+        Since Selenium itself does not support Direct Screen Tech used in iMacros,
+        We use AutoIt to simulate OS-Level mouse and keyboard events.
+
+        
+        '''
+        # TODO Use AutoKey API to simulate user inputs under Linux
 
     def execute_set_command(self, name, value):
         '''
@@ -221,12 +248,15 @@ class Bridge(object):
         '''
         SIZE X=1024 Y=768
 
-        >>> bridge = Bridge()
-        >>> bridge.set_browser(Bridge.FIREFOX)
-        >>> bridge.start_driver()
-        >>> bridge.execute_size_command("X=300", "Y=600")
+        # >>> bridge = Bridge()
+        # >>> bridge.set_browser(Bridge.FIREFOX)
+        # >>> bridge.start_driver()
+        # >>> bridge.execute_size_command("X=300", "Y=600")
+        # >>> bridge.execute_wait_command("SECONDS=5")
+        # >>> bridge.reset()
 
         '''
+        # TODO Need to add asserts to resized window
         if not (self.RE_X.match(x) and self.RE_Y.match(y)): 
             raise ValueError, "Wrong argument format"
         x, y = int(x[2:]), int(y[2:])
@@ -237,15 +267,43 @@ class Bridge(object):
         """
         TAG POS=1 FORM=ID:login ATTR=NAME:email
 
+        >>> bridge = Bridge()
+        >>> bridge.set_browser(Bridge.FIREFOX)
+        >>> bridge.start_driver()
+
+        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        # >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=HREF:http://www.iopus.com")
+        # >>> bridge.execute_wait_command("SECONDS=5")
+
+        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        # >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=ID:myLinkID")
+        # >>> bridge.execute_wait_command("SECONDS=5")
+
+        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        # >>> bridge.execute_tag_command("POS=1", "TYPE=A", "ATTR=NAME:myLinkName")
+        # >>> bridge.execute_wait_command("SECONDS=5")
+
+        # >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        # >>> bridge.execute_tag_command("POS=1", "TYPE=STRONG", "ATTR=TXT:<SP>iMacros<SP>User<SP>Forum")
+        # >>> bridge.execute_wait_command("SECONDS=5")
+
+        >>> bridge.execute_url_command("GOTO=http://www.iopus.com/imacros/support/html2tag.htm")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:TEXT", "FORM=NAME:f1", "ATTR=NAME:tf1" "CONTENT=Hello<SP>World")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:CHECKBOX", "FORM=NAME:f1" "ATTR=NAME:cb1&&ID:cb1", "CONTENT=YES")
+        >>> bridge.execute_tag_command("POS=1", "TYPE=INPUT:RADIO", "FORM=NAME:f1", "ATTR=ID:r1", "CONTENT=YES")
+
         """
         # TODO
         # Support relative position value
         # Support extract data
+        # Provide better test experience
+        # Need to add asserts to clicked links
+
         pos, type, form, attrs, content, extract = self._parse_tag_arguments(*args)
         element = self._find_element_by(pos, type, form, attrs)
         if content:
             element.clear()
-            element.send_keys(content)
+            element.send_keys(self._parse_value_string(content))
         elif extract:
             logger.warn("Extract is not supported yet. Will trigger a click instead")
             element.click()
@@ -352,9 +410,15 @@ class Bridge(object):
 
     def _parse_html_attributes(self, string):
         attributes = {}
-        for attr in string.split('&&'):
-            name, value = attr.split(':')
-            attributes[name.lower()] = self._parse_value_string(value)
+        if string
+            for attr in string.split('&&'):
+                if ':' in attr:
+                    # Both name and value, e.g. NAME:email
+                    name, value = attr.split(':', 1)
+                    attributes[name.lower()] = self._parse_value_string(value)
+                elif attr != '*':
+                    # Only attribute name, e.g. NAME
+                    attributes[attr.lower()] = True
         return attributes
 
     def _find_element_by(self, pos, type, form, attrs):
@@ -364,19 +428,25 @@ class Bridge(object):
 
         css_selector = type
         text = attrs.pop('txt', None)
-        if text is not None:
-            css_selector += ':contains(%s)' % text
+        # Selenium WebDriver does not support Sizzle-style pseudo-selectors like :contains well
+        # So we fallback to standard method
+        # if text is not None:
+        #     css_selector += ':contains("%s")' % text
         for name, value in attrs.items():
-            css_selector += '[%s="%s"'] % (name.lower(), value)
+            css_selector += '[%s]' % name.lower() \
+                    if value is True \
+                    else '[%s="%s"]' % (name.lower(), value)
 
         if form:
             form = self._find_element_by(1, 'form', None, form)
-            element = form.find_elements_by_css_selector(css_selector)[pos - 1]
+            elements = form.find_elements_by_css_selector(css_selector)
         else:
-            element = self.driver.find_elements_by_css_selector(css_selector)[pos - 1]
-        return element
-
-
+            elements = self.driver.find_elements_by_css_selector(css_selector)
+        if text is not None:
+            # Selenium will strip element text automatically
+            text = text.strip()
+            elements = [element for element in elements if element.text == text]
+        return elements[pos - 1]
 
 if __name__ == '__main__':
     import  doctest
