@@ -147,6 +147,10 @@ class Bridge(object):
     RE_BUILTIN_VARIABLE_NAME = re.compile(r'^(![0-9A-Z_]+)$')
     RE_QUOTED_STRING = re.compile(r'^[\'\"](.*)[\'\"]$')
     RE_SECONDS = re.compile(r'^SECONDS=(\d+)$')
+    # TODO Support more direct screen events
+    # RE_DS_CMD = re.compile(r'^CMD=(CLICK|LDBLCLK|LDOWN|LUP|MOVETO|MDOWN|MUP|MDBLCLK|RDOWN|RUP|RDBLCLK|KEY)$')
+    RE_DS_CMD = re.compile(r'^CMD=(CLICK|KEY)$')
+
 
     def __init__(self):
         self.reset()
@@ -162,9 +166,11 @@ class Bridge(object):
             self.driver = self.WEB_DRIVERS[self.browser]()
 
             if using_autoit:
-                # Get handle for AutoIT
-                # self.autoit = win32com.client.Dispatch("AutoItX3.Control")
-                pass
+                # Set unique window title to get handle for AutoIT
+                self.driver.execute_script("document.title = '%s'" % self.driver.d.current_window_handle)
+                self.autoit = win32com.client.Dispatch("AutoItX3.Control")
+                self.autoit_handle = self.autoit.WinWait(self.driver.current_window_handle)
+                self.autoit.WinActivate(self.autoit_handle)
         else:
             logger.info('Driver is already started')
 
@@ -213,14 +219,46 @@ class Bridge(object):
             else:
                 self.execute_unsupported_command(command[0], *command[1:])
 
-    def execute_ds_command(self):
+    def execute_ds_command(self, cmd, *args):
         '''
         Since Selenium itself does not support Direct Screen Tech used in iMacros,
         We use AutoIt to simulate OS-Level mouse and keyboard events.
 
-        
+        DS CMD=CLICK X=340 Y=410 CONTENT=
+        DS CMD=KEY CONTENT=notepad.exe
+
         '''
         # TODO Use AutoKey API to simulate user inputs under Linux
+        if self.autoit_handle is None:
+            raise ValueError, "AutoIt must be installed to use direct screen commands"
+
+        match = self.RE_DS_CMD.match(cmd)
+        if not match:
+            raise ValueError, "Wrong arugment format"
+        cmd = match.group(1)
+        if cmd == 'KEY':
+            # It's a keyboard event
+            content = self._parse_value_string(args)
+            self.autoit.Send(content)
+        else:
+            # It's a mouse event
+            x, y, content = args
+            if not (self.RE_X.match(x) and self.RE_Y.match(y)): 
+                raise ValueError, "Wrong argument format"
+            x, y = int(x[2:]), int(y[2:])
+
+            # For IE we can send mouse events directly to page frame
+            if self.browser == self.IE:
+                self.autoit.ControlClick(self.autoit_handle, "", "[CLASS:Internet Explorer_Server; INSTANCE:1]", 1, x, y)
+            elif self.browser == self.Chrome:
+                self.autoit.ControlClick(self.autoit_handle, "", "[CLASS:Internet Explorer_Server; INSTANCE:1]", 1, x, y)
+            else:
+                # FIXME
+                # Since we have not found a way to get border size of firefox window,
+                # so we have to estimate the coordinate of screen to click which 
+                # might be not very precise.
+                # TODO Hide Add-on Bar to improve precise
+                raise NotImplementedError, "Not implemented yet"
 
     def execute_set_command(self, name, value):
         '''
@@ -301,6 +339,7 @@ class Bridge(object):
 
         pos, type, form, attrs, content, extract = self._parse_tag_arguments(*args)
         element = self._find_element_by(pos, type, form, attrs)
+        # TODO Save element coordinate in !TAGX and !TAGY
         if content:
             # Handle form controls
             if element.tag_name in ('input', 'textarea'):
