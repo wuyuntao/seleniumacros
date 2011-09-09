@@ -6,6 +6,7 @@ import time
 import logging
 import platform
 from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
 
 logger = logging.getLogger('seleniumacros')
 
@@ -23,6 +24,8 @@ except ImportError:
 
 class Bridge(object):
     ''' A bridge between iMacros and Selenium '''
+    # TODO
+    # Handle native dialog from IE or Firefox, e.g. save password dialog
 
     # Browser code
     IE      = 'ie'
@@ -107,7 +110,7 @@ class Bridge(object):
         # '!MARKOBJECT',
         # '!NOW',
         # '!POPUP_ALLOWED',
-        # '!REPLAYSPEED',
+        '!REPLAYSPEED',
         # '!REGION_BOTTOM',
         # '!REGION_LEFT',
         # '!REGION_RIGHT',
@@ -136,7 +139,13 @@ class Bridge(object):
         '!TIMEOUT_MACRO': '3600',
         '!TIMEOUT_PAGE':  '3600',
         '!TIMEOUT_STEP':  '3600',
+        '!REPLAYSPEED':   'FAST',
     }
+
+    # Seconds to wait between commands
+    REPLAYSPEED_FAST = 0
+    REPLAYSPEED_MEDIUM = 0.25
+    REPLAYSPEED_SLOW = 1
 
     RE_COMMENT = re.compile(r'^\'\'\s*(.*)$')
     RE_X = re.compile(r'^X=(\d+)$')
@@ -167,9 +176,11 @@ class Bridge(object):
 
             if using_autoit:
                 # Set unique window title to get handle for AutoIT
-                self.driver.execute_script("document.title = '%s'" % self.driver.d.current_window_handle)
+                self.driver.execute_script("document.title = '%s'" % \
+                        self.driver.current_window_handle)
                 self.autoit = win32com.client.Dispatch("AutoItX3.Control")
-                self.autoit_handle = self.autoit.WinWait(self.driver.current_window_handle)
+                self.autoit_handle = \
+                        self.autoit.WinWait(self.driver.current_window_handle)
                 self.autoit.WinActivate(self.autoit_handle)
         else:
             logger.info('Driver is already started')
@@ -178,6 +189,8 @@ class Bridge(object):
         for name, value in variables.items():
             if name in self.SUPPORTED_BUILTIN_VARIABLES:
                 self.builtin_variables[name] = value
+            else:
+                logger.warn("built-in variable %s is not supported yet.")
 
     def set_variables(self, variables={}):
         self.variables.update(variables)
@@ -218,6 +231,7 @@ class Bridge(object):
                 getattr(self, 'execute_%s_command' % command[0].lower())(*command[1:])
             else:
                 self.execute_unsupported_command(command[0], *command[1:])
+            self._replay_wait()
 
     def execute_ds_command(self, cmd, *args):
         '''
@@ -351,11 +365,52 @@ class Bridge(object):
                 else:
                     element.clear()
                     element.send_keys(self._parse_value_string(content))
+
+            elif element.tag_name == 'select':
+                options = content.split(":")
+
+                if element.get_attribute('multiple') in ('multiple', 'on', 'true', 'yes'):
+                    # If element is a multiple select, hold CTRL key and click all options
+                    # FIXME
+                    # Will raise an "Unrecognized command" exception under Firefox:
+                    # http://code.google.com/p/selenium/issues/detail?id=1427
+                    chain = webdriver.ActionChains(self.driver)
+                    action = chain.key_down(Keys.CONTROL)
+                    for option in options:
+                        action = action.click(self._find_option_by(element, option))
+                    action.key_up(Keys.CONTROL).perform()
+
+                else:
+                    # If element is a dropdown select, just click the last option
+                    try:
+                        option = self._find_option_by(element, options[-1])
+                        option.click()
+                    except IndexError:
+                        # Do nothing if content is empty
+                        pass
+
         elif extract:
             logger.warn("Extract is not supported yet. Will trigger a click instead")
             element.click()
         else:
             element.click()
+
+    def _find_option_by(self, element, option):
+        if option.startswith('%'):
+            # Use value attribute to find option
+            option = element.find_element_by_css_selector('option[value="%s"]' \
+                    % self._parse_value_string(option[1:].strip()))
+        else:
+            # Use text to find option
+            text = self._parse_value_string((option[1:] if option.startswith('$') else option).strip())
+            try:
+                for option in element.find_elements_by_tag_name('option'):
+                    print "%s : %s" % (option.text, text)
+                option = [option for option in element.find_elements_by_tag_name('option') \
+                        if option.text == text][0]
+            except IndexError:
+                raise IndexError, "%s : %s" % (option.text, text)
+        return option
 
     def execute_url_command(self, goto):
         '''
@@ -495,6 +550,13 @@ class Bridge(object):
             text = text.strip()
             elements = [element for element in elements if element.text == text]
         return elements[pos - 1]
+
+    def _replay_wait(self):
+        try:
+            time.sleep(getattr(self, 'REPLAYSPEED_%s' % \
+                    self.builtin_variables['!REPLAYSPEED']))
+        except AttributeError:
+            raise ValueError, "Wrong value for !REPLAYSPEED"
 
 if __name__ == '__main__':
     import  doctest

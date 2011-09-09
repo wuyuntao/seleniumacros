@@ -1,46 +1,85 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
+import re
 import logging
 from selenium import webdriver
 from bridge import Bridge
 
 logger = logging.getLogger('seleniumacros')
 
+def handle_retcode(func):
+    def wrap(*args, **kwargs):
+        retcode = func(*args, **kwargs)
+        if retcode is None or retcode is True:
+            return Bridge.OK
+        elif retcode is False:
+            return Bridge.FAIL
+        else:
+            return int(retcode)
+    return wrap
+
 class Interface(object):
-    ''' Provide similar interfaces to iMacros '''
+    '''
+    Provide similar interfaces to iMacros
+    
+    >>> imacros = Interface()
+
+    # >>> imacros.iimInit("-ie")
+    # 1
+    # >>> imacros.iimPlay("Z:/iMacrosDemo/FillForm.iim")
+    # 1
+
+    >>> imacros.iimInit("-fx")
+    1
+    >>> imacros.iimPlay("/home/yuntao/Downloads/iMacrosDemo/FillForm.iim")
+    1
+
+    # >>> imacros.iimExit()
+    # 1
+
+    '''
+
+    RE_INIT_COMMAND = re.compile(r'^-(\w+)(?:\s+(.*))?$')
 
     def __init__(self):
         self.bridge = Bridge()
 
-    def iimInit(self, command, openNewBrowser=True, timeout=0):
+    @handle_retcode
+    def iimInit(self, command, openNewBrowser=True, timeout=False):
         """
         Setup new browser driver.
         See http://wiki.imacros.net/iimInit%28%29 for more info.
         """
-        # openNewBrowser and timeout paramenters are ignored currently
-        m = re.match(r'^-(\w+)(?:\s+(.*))?$', command)
-        if not m:
+        # openNewBrowser is ignored, since we always open new window
+        match = re.match(self.RE_INIT_COMMAND, command)
+        if not match:
             raise ValueError('Wrong command for iimInit')
-        self.bridge.set_browser(m.group(1))
+        self.bridge.set_browser(match.group(1))
         self.bridge.start_driver()
-        return True
+        if timeout > 0:
+            self.bridge.set_builtin_variables({'!TIMEOUT_MACRO': int(timeout)})
 
-    def iimPlay(self, macro, timeout=0):
+    @handle_retcode
+    def iimPlay(self, macro, timeout=False):
         """
         Start browser process if it is not started yet.  Replay macro.
         See http://wiki.imacros.net/iimPlay%28%29 for more info.
         """
-        return self.bridge.execute_script(macro, timeout)
+        if timeout > 0:
+            self.bridge.set_builtin_variables({'!TIMEOUT': int(timeout)})
+        return self.bridge.execute_script(macro)
 
+    @handle_retcode
     def iimSet(self, name, value):
         """
         Set user variable for next macro replay.
         Should be called before each iimPlay() call to take effect.
         See http://wiki.imacros.net/iimSet%28%29 for more info.
         """
-        return self.bridge.set_variables({name: value})
+        self.bridge.set_variables({name: value})
 
+    @handle_retcode
     def iimDisplay(self, message, timeout=0):
         """
         Displays a message in the browser
@@ -48,37 +87,32 @@ class Interface(object):
         """
         # This feature is not supported yet
         logger.warn("Not supported yet")
-        # Still return True since we don't want to break the execution
-        return True
 
+    @handle_retcode
     def iimExit(self, timeout=0):
         """
         Closes browser instance.
         See http://wiki.imacros.net/iimExit%28%29 for more info.
         """
         self.bridge.reset()
-        return True
 
+    @handle_retcode
     def iimGetLastError(self, index=-1):
         """
         Returns the text associated with the last error.
         See http://wiki.imacros.net/iimGetLastError%28%29 for more info.
         """
-        try:
-            return self.bridge.errors[index]
-        except IndexError:
-            return None
+        return self.bridge.errors[index]
 
+    @handle_retcode
     def iimGetLastExtract(self, index=-1):
         """
         Returns the contents of the !EXTRACT variable.
         See http://wiki.imacros.net/iimGetLastExtract%28%29 for more info.
         """
-        try:
-            self.bridge.extracts[index]
-        except IndexError:
-            return None
+        return self.bridge.extracts[index]
 
+    @handle_retcode
     def iimTakeBrowserScreenshot(self, path, img_type, timeout=0):
         """
         Takes screenshot of browser or web page
@@ -86,6 +120,7 @@ class Interface(object):
         """
         raise NotImplementedError, "Not implemented yet"
 
+    @handle_retcode
     def iimGetLastPerformance(self, index=0):
         """
         Returns the total runtime and STOPWATCH data for the most recent macro run.
@@ -96,3 +131,7 @@ class Interface(object):
         See http://wiki.imacros.net/iimGetLastPerformance for more info.
         """
         raise NotImplementedError, "Not implemented yet"
+
+if __name__ == '__main__':
+    import  doctest
+    doctest.testmod()
