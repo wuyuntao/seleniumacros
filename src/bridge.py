@@ -5,6 +5,7 @@ import re
 import time
 import logging
 import platform
+import urlparse
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
 from error import Timeout, ElementNotFound
@@ -176,6 +177,7 @@ class Bridge(object):
         if force or self.driver is None:
             logger.info(u'Starting driver')
             self.driver = self.WEB_DRIVERS[self.browser]()
+            self.driver.implicitly_wait(int(self.builtin_variables.get('!TIMEOUT', 10)))
 
             if using_autoit:
                 # Set unique window title to get handle for AutoIT
@@ -233,13 +235,13 @@ class Bridge(object):
             # So we need a regexp to split tokens in the futrue
             command = command.split()
             if command[0] in self.SUPPORTED_COMMANDS:
-                # try:
-                #     getattr(self, 'execute_%s_command' % command[0].lower())(*command[1:])
-                # except Exception, e:
-                #     logger.error(e)
-                #     self.errors.append(e)
-                #     return False
-                getattr(self, 'execute_%s_command' % command[0].lower())(*command[1:])
+                try:
+                    getattr(self, 'execute_%s_command' % command[0].lower())(*command[1:])
+                except Exception, e:
+                    logger.error(e)
+                    self.errors.append(e)
+                    return False
+                # getattr(self, 'execute_%s_command' % command[0].lower())(*command[1:])
             else:
                 self.execute_unsupported_command(command[0], *command[1:])
             self._replay_wait()
@@ -525,8 +527,9 @@ class Bridge(object):
         return pos, type, form, attrs, content, extract
 
     def _parse_html_element_type(self, string):
-        if string.startswith('INPUT:'):
-            return u'input[type=%s]' % string[6:].lower()
+        if ':' in string:
+            tag, type = map(lambda s: s.lower(), string.split(':', 1))
+            return u'%s[type=%s]' % (tag, type)
         else:
             return string.lower()
 
@@ -549,31 +552,40 @@ class Bridge(object):
             return self.driver.find_element_by_id(attrs['id'])
 
         css_selector = type
-        text = attrs.pop('txt', None)
-        # Selenium WebDriver does not support Sizzle-style pseudo-selectors like :contains well
-        # So we fallback to standard method
-        # if text is not None:
-        #     css_selector += ':contains("%s")' % text
-        for name, value in attrs.items():
-            css_selector += '[%s]' % name.lower() \
-                    if value is True \
-                    else '[%s="%s"]' % (name.lower(), self._escape_string(value))
-        logger.debug(u'css selector: %s' % self._escape_string(css_selector))
 
+        # If form selector is provided, find element from children of it
         if form:
             form = self._find_element_by(1, 'form', None, form)
             elements = form.find_elements_by_css_selector(css_selector)
-            # raise ValueError, 'find form? %s\ncss_selector? %s\nfind elements? %s' % (form, css_selector, len(elements))
         else:
             elements = self.driver.find_elements_by_css_selector(css_selector)
+
         # FIXME
         # Selenium sometimes returns None if can not find any matching elements
         # So we have to make sure it always return a list
         elements = elements or []
+
+        # NOTE
+        # Have to query attributes by list filter since both CSS and XPATH
+        # query engine of Selenium is just suck
+
+        text = attrs.pop('txt', None)
         if text is not None:
             # Selenium will strip element text automatically
             text = text.strip()
             elements = [element for element in elements if element.text == text]
+
+        for name, value in attrs.items():
+            name = name.lower()
+            if value is True:
+                elements = [el for el in elements if el.get_attribute(name)]
+            else:
+                if name in ('href', 'src', 'action'):
+                    # Make URL values absolute
+                    value = urlparse.urljoin(self.driver.current_url, value)
+                value = self._escape_string(value.strip())
+                elements = [el for el in elements if el.get_attribute(name).startswith(value)]
+
         return elements[pos - 1]
 
     def _replay_wait(self):
